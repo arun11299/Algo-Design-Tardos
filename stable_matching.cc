@@ -6,6 +6,7 @@
 #include <cassert>
 #include <random>
 #include <functional>
+#include <iterator>
 
 struct Entity
 {
@@ -48,19 +49,21 @@ struct Entity
 std::vector<uint32_t> generate_random_set(uint32_t n, size_t ub)
 {
   assert (n <= ub);
-  std::vector<uint32_t> res{n};
+  std::vector<uint32_t> res;
+  res.reserve(n);
 
   auto contains = [&](uint32_t value) {
     auto itr = std::find_if(std::begin(res), std::end(res), std::bind2nd(std::equal_to<uint32_t>(), value));
     return itr != std::end(res);
   };
 
-  std::uniform_int_distribution<> dis(1, ub);
+  std::uniform_int_distribution<> dis(0, ub - 1);
   std::random_device rd;
   std::mt19937 gen(rd());
 
   while (res.size() < n) {
     auto v = dis(gen);
+    std::cout << "Gen : " << v << std::endl;
     if (!contains(v)) {
       res.push_back(v);
     }
@@ -81,17 +84,22 @@ void fill_preflist(Entity& e, std::vector<Entity>& pool, uint32_t n)
   e.pref_entity_.reserve(rlist.size());
 
   for (auto idx : rlist) {
+    std::cout << "Idx : " << idx << std::endl;
     e.pref_entity_.push_back(&pool[idx]);
   }
 }
 
 void engage(Entity& a, Entity& b)
 {
-  a.engaged_to_->unmatch();
-  a.unmatch();
+  if (not a.is_free()) {
+    a.engaged_to_->unmatch();
+    a.unmatch();
+  }
 
-  b.engaged_to_->unmatch();
-  b.unmatch();
+  if (not b.is_free()) {
+    b.engaged_to_->unmatch();
+    b.unmatch();
+  }
 
   a.engaged_to_ = &b;
   b.engaged_to_ = &a;
@@ -106,16 +114,14 @@ void bring_stability(std::vector<Entity>& set_a, std::vector<Entity>& set_b)
   auto find_match = [&](Entity* pref, std::vector<Entity>& target) 
   {
     auto itr = std::find_if(target.begin(), target.end(), [&](const Entity& el) { return &el == pref; });
-    assert (itr != target.end());
     return itr;
   };
 
-  auto remove_from_free_list = [&](Entity* to_del) 
+  auto remove_from_free_list = [](std::set<Entity*>& s, Entity* to_del) mutable
   {
-    auto itr = std::find_if(free_list.begin(), free_list.end(),
-                            std::bind2nd(std::equal_to<Entity*>(), to_del));
-    assert (itr != free_list.end());
-    free_list.erase(itr);
+    auto itr = s.find(to_del);
+    assert (itr != s.end());
+    s.erase(itr);
   };
 
 
@@ -125,18 +131,27 @@ void bring_stability(std::vector<Entity>& set_a, std::vector<Entity>& set_b)
 
   while (free_list.size()) {
     std::cout << free_list.size() << std::endl;
-    for (auto& e_a : free_list) {
-      for (auto& pref : e_a->pref_entity_) {
-        auto itr = find_match(pref, set_b);
-        // if the preference is free lock it
-        if (itr->is_free()) {
-          engage(*e_a, *itr);
-          remove_from_free_list(e_a);
-        } else if(itr->will_prefer(e_a)) {
-          free_list.insert(itr->engaged_to_);
-          engage(*e_a, *itr);
-          remove_from_free_list(e_a);
-        }
+
+    std::uniform_int_distribution<> dis(0, free_list.size() - 1);
+    std::random_device rd;
+    std::mt19937 gen(rd());
+
+    auto beg = free_list.begin();
+    auto e_a = *std::next(beg, dis(gen));
+
+    for (auto& pref : e_a->pref_entity_) {
+      auto itr = find_match(pref, set_b);
+      assert (itr != std::end(set_b) && "find_match should always succeed");
+      // if the preference is free lock it
+      if (itr->is_free()) {
+        engage(*e_a, *itr);
+        remove_from_free_list(free_list, e_a);
+        break;
+      } else if(itr->will_prefer(e_a)) {
+        free_list.insert(itr->engaged_to_);
+        engage(*e_a, *itr);
+        remove_from_free_list(free_list, e_a);
+        break;
       }
     }
   } // end while
@@ -144,15 +159,15 @@ void bring_stability(std::vector<Entity>& set_a, std::vector<Entity>& set_b)
 }
 
 int main() {
-  std::vector<Entity> set_a{10};
-  std::vector<Entity> set_b{10};
+  std::vector<Entity> set_a; set_a.reserve(10);
+  std::vector<Entity> set_b; set_b.reserve(10);
 
   std::uniform_int_distribution<> dis(0, set_a.size() - 1);
   std::random_device rd;
   std::mt19937 gen(rd());
 
-  for (auto& e : set_a) fill_preflist(e, set_b, dis(gen));
-  for (auto& e : set_b) fill_preflist(e, set_a, dis(gen));
+  for (auto& e : set_a) fill_preflist(e, set_b, 10);
+  for (auto& e : set_b) fill_preflist(e, set_a, 10);
 
   bring_stability(set_a, set_b);
 
